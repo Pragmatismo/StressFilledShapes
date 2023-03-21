@@ -1,12 +1,11 @@
 import pygame
 import random
 import math
-import noise
+from background_generator import generate_background
 
 import pygame.font
 import numpy as np
 
-# Constants
 # Constants
 WIDTH = 1200
 HEIGHT = 1000
@@ -14,16 +13,13 @@ HEIGHT = 1000
 attack_text_width = int(0.25 * WIDTH)
 attack_text_height = int(0.25 * HEIGHT)
 attack_text_rect = pygame.Rect(0, 0, attack_text_width, attack_text_height)
-
 game_text_width = WIDTH
-game_text_height = int(0.25 * HEIGHT)
-
+game_text_height = int(0.05 * HEIGHT)
 playarea_width = WIDTH - attack_text_width
 playarea_height = HEIGHT - game_text_height
 
 game_text_rect = pygame.Rect(0, playarea_height, game_text_width, game_text_height)
 playarea_rect = pygame.Rect(attack_text_width, 0, playarea_width, playarea_height)
-
 
 WHITE = (255, 255, 255)
 BLUE = (0, 0, 255)
@@ -101,84 +97,55 @@ class Player(pygame.sprite.Sprite):
             power_level = random.randint(1, 12)
             attack_cost = random.randint(power_level * 2, power_level * 4)
             rage_chance = power_level * 5
-
-            attack = {
-                "name": name,
-                "type": attack_type,
-                "power_level": power_level,
-                "attack_cost": attack_cost,
-                "rage_chance": rage_chance
-            }
+            attack = {"name": name,
+                      "type": attack_type,
+                      "power_level": power_level,
+                      "attack_cost": attack_cost,
+                      "rage_chance": rage_chance}
             attacks.append(attack)
-
         return attacks
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, corners, x, y):
         super().__init__()
         self.corners = corners
-        self.health = corners * (random.randint(200,400) / 100)
+        self.health = corners * (random.uniform(2, 4))
         self.power_level = corners - 2
-        self.speed = random.randint(1, 10) / 5
+        self.speed = random.uniform(0.2, 2)
         self.image = pygame.Surface((50, 50), pygame.SRCALPHA)
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
+        self.rect = self.image.get_rect(topleft=(x, y))
         self.jagged_shape = self.generate_jagged_shape()
-        self.available_attacks = self.get_available_attacks()
+        self.available_attacks = ['pointy', 'sharp', 'jagged']
 
     def move_towards_player(self, player_x, player_y):
-        dx = player_x - self.rect.x
-        dy = player_y - self.rect.y
-        distance = (dx ** 2 + dy ** 2) ** 0.5
+        dx, dy = player_x - self.rect.x, player_y - self.rect.y
+        distance = math.hypot(dx, dy)
 
-        if distance != 0:
-            unit_vector_x = dx / distance
-            unit_vector_y = dy / distance
-
-            self.rect.x += unit_vector_x * self.speed
-            self.rect.y += unit_vector_y * self.speed
+        if distance:
+            self.rect.x += (dx / distance) * self.speed
+            self.rect.y += (dy / distance) * self.speed
 
     def generate_jagged_shape(self):
         angle_increment = 2 * math.pi / self.corners
-        points = []
-
-        for i in range(self.corners):
-            angle = i * angle_increment
-            random_length = random.uniform(0.3, 1) * self.rect.width // 2
-            x = self.rect.width // 2 + random_length * math.cos(angle)
-            y = self.rect.height // 2 + random_length * math.sin(angle)
-            points.append((x, y))
+        points = [
+            (
+                self.rect.width // 2 + random.uniform(0.3, 1) * self.rect.width // 2 * math.cos(i * angle_increment),
+                self.rect.height // 2 + random.uniform(0.3, 1) * self.rect.height // 2 * math.sin(i * angle_increment),
+            )
+            for i in range(self.corners)
+        ]
 
         pygame.draw.polygon(self.image, self.get_random_color(), points)
         return points
 
-    def get_available_attacks(self):
-        return ['pointy', 'sharp', 'jagged']
-
     def get_random_color(self):
         while True:
-            r = random.randint(100, 255)
-            g = random.randint(100, 255)
-            b = random.randint(100, 255)
+            r, g, b = (random.randint(100, 255) for _ in range(3))
 
-            # Check if the color is not too close to blue
             if not (r < 100 and g < 100 and b > 200):
                 break
 
         return (r, g, b)
-
-def check_enemy_health(enemy, enemies_group):
-    if enemy.health <= 0:
-        enemies_group.remove(enemy)
-
-    if not enemies_group:
-        global mobs_defeated
-        mobs_defeated += 1
-        print(f"Mobs defeated: {mobs_defeated}")
-
-        if mobs_defeated < total_mobs:
-            generate_mob(2 * (mobs_defeated + 1), player, enemies_group)
 
 class ExpandingCircle(pygame.sprite.Sprite):
     def __init__(self, player, attack):
@@ -191,32 +158,30 @@ class ExpandingCircle(pygame.sprite.Sprite):
         self.initial_center = (self.player.rect.x + self.player.radius, self.player.rect.y + self.player.radius)
 
     def update(self, enemies_group):
-        if self.expanding:
-            self.radius += self.attack["power_level"]
-            max_size = (self.attack["power_level"] * 6 * random.uniform(0.75, 1.25)) + self.player.size
-            if self.radius >= max_size:
-                self.expanding = False
+        self.radius += self.attack["power_level"] if self.expanding else -10
+        self.red_value -= 10 if not self.expanding else 0
+        if not self.expanding and self.red_value <= 0:
+            self.kill()
+            return
+        if self.expanding and self.radius >= (self.attack["power_level"] * 6 * random.uniform(0.75, 1.25)) + self.player.size:
+            self.expanding = False
+
+        # Check if dimensions are valid
+        if self.radius > 0:
+            self.image = pygame.Surface((self.radius * 2, self.radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(self.image, (self.red_value, 0, 0), (self.radius, self.radius), self.radius, 1)
+            self.rect = self.image.get_rect(center=self.initial_center)
+            if self.expanding:
+                self.check_collision(enemies_group)
         else:
-            self.red_value -= 10
-            if self.red_value <= 0:
-                self.kill()
-                return
+            self.kill()
 
-        self.image = pygame.Surface((self.radius * 2, self.radius * 2), pygame.SRCALPHA)
-        pygame.draw.circle(self.image, (self.red_value, 0, 0), (self.radius, self.radius), self.radius, 1)
-        self.rect = self.image.get_rect()
-        self.rect.center = self.initial_center
-
-        if self.expanding:
-            self.check_collision(enemies_group)
 
     def check_collision(self, enemies_group):
         for enemy in enemies_group:
             for corner in enemy.jagged_shape:
-                corner_x = enemy.rect.x + corner[0]
-                corner_y = enemy.rect.y + corner[1]
-                distance = math.sqrt((self.rect.centerx - corner_x)**2 + (self.rect.centery - corner_y)**2)
-
+                corner_x, corner_y = enemy.rect.x + corner[0], enemy.rect.y + corner[1]
+                distance = math.hypot(self.rect.centerx - corner_x, self.rect.centery - corner_y)
                 if distance <= self.radius:
                     enemy.health -= self.attack["power_level"]
                     print(f"Enemy hit! Health: {enemy.health}")
@@ -247,42 +212,110 @@ class Projectile:
     def draw(self, screen):
         pygame.draw.circle(screen, self.color, (self.x, self.y), self.size)
 
+class ScreenRenderer:
+    def __init__(self, screen, playarea_background, playarea_rect, player, attack_text_rect, game_text_rect):
+        self.screen = screen
+        self.playarea_background = playarea_background
+        self.playarea_rect = playarea_rect
+        self.player = player
+        self.attack_text_rect = attack_text_rect
+        self.game_text_rect = game_text_rect
+
+    def draw_screen(self, enemies_group, expanding_circle_group, wave_number):
+        # Clear the screen
+        self.screen.fill((205, 235, 205))
+        self.screen.blit(self.playarea_background, (self.playarea_rect.left, self.playarea_rect.top))
+
+        padding = int(self.playarea_rect.width * 0.03)
+        start_x = self.playarea_rect.x + padding
+        bar_width = (self.playarea_rect.width - 4 * padding) // 3
+        bar_height = int(self.game_text_rect.height * 0.8)
+        bar_spacing = padding
+        status_bar_y = self.playarea_rect.y + self.playarea_rect.height
+
+        self.draw_status_bar(start_x, status_bar_y, bar_width, bar_height, self.player.health, self.player.max_health, (255, 0, 0), "Health")
+        self.draw_status_bar(start_x + bar_width + bar_spacing, status_bar_y, bar_width, bar_height, self.player.rage, self.player.max_rage, (255, 140, 0), "Rage")
+        self.draw_status_bar(start_x + (bar_width + bar_spacing) * 2, status_bar_y, bar_width, bar_height, self.player.level, self.player.max_level, (0, 255, 0), "Level")
+
+        self.draw_wave_text(wave_number)
+        self.display_attacks()
+        enemies_group.draw(self.screen)
+        expanding_circle_group.draw(self.screen)
+
+        # Update projectiles
+        for projectile in self.player.projectiles[:]:
+            projectile.move()
+            projectile.fade()
+            projectile.draw(self.screen)
+
+            if projectile.color[2] == 0:
+                self.player.projectiles.remove(projectile)
+
+        self.screen.blit(self.player.image, self.player.rect)
+        pygame.display.flip()
+
+    @staticmethod
+    def lerp_color(color1, color2, t):
+        r = int(color1[0] + (color2[0] - color1[0]) * t)
+        g = int(color1[1] + (color2[1] - color1[1]) * t)
+        b = int(color1[2] + (color2[2] - color1[2]) * t)
+        return (r, g, b)
 
 
-# Create player instance
-player = Player()
+    def draw_wave_text(self, wave_number):
+        font = pygame.font.SysFont("Arial", 36)  # You can replace "Arial" with any available system font.
+        text = font.render(f"Wave: {wave_number}", True, (190, 20, 20))
 
-def generate_background(playarea_rect):
-    grass_color = (200, 230, 200)
-    mud_color = (180, 150, 100)
-    scale = 0.1
-    octaves = 4
+        # Create the outline by rendering the same text in a larger size
+        outline_font = pygame.font.SysFont("Arial", 36)
+        outline_text = outline_font.render(f"Wave: {wave_number}", True, (0, 0, 0))
 
-    width, height = playarea_rect.size
-    playarea_background = pygame.Surface((width, height))
+        text_width, text_height = text.get_size()
+        x = self.playarea_rect.right - text_width - 10  # 10 pixels padding from the right side of the playarea_rect
+        y = 10  # 10 pixels padding from the top
 
-    for x in range(width):
-        for y in range(height):
-            n = noise.pnoise2(x * scale, y * scale, octaves)
-            n = (n + 1) / 2
-
-            if n < 0.5:
-                color = lerp_color(grass_color, mud_color, n * 2)
-            else:
-                color = lerp_color(mud_color, grass_color, (n - 0.5) * 2)
-
-            playarea_background.set_at((x, y), color)
-
-    return playarea_background
+        # First, draw the outline, then draw the main text on top of it.
+        self.screen.blit(outline_text, (x - 1, y - 1))
+        self.screen.blit(outline_text, (x + 1, y - 1))
+        self.screen.blit(outline_text, (x - 1, y + 1))
+        self.screen.blit(outline_text, (x + 1, y + 1))
+        self.screen.blit(text, (x, y))
 
 
+    def draw_status_bar(self, x, y, width, height, value, max_value, color, label):
+        # Draw the background of the status bar
+        background_color = (255, 255, 255)
+        pygame.draw.rect(self.screen, background_color, (x, y, width, height))
+        # Calculate the filled part of the status bar
+        filled_width = int(width * (value / max_value))
+        # Draw the filled part of the status bar
+        pygame.draw.rect(self.screen, color, (x, y, filled_width, height))
+        # Render the label text
+        font = pygame.font.Font(None, int(height * 0.8))
+        label_surface = font.render(label, True, self.lerp_color(color, background_color, 0.5))
+        # Position the label on the status bar
+        label_x = x + (width - label_surface.get_width()) // 2
+        label_y = y + (height - label_surface.get_height()) // 2
+        # Draw the label on the screen
+        self.screen.blit(label_surface, (label_x, label_y))
 
-def lerp_color(color1, color2, t):
-    r = int(color1[0] + (color2[0] - color1[0]) * t)
-    g = int(color1[1] + (color2[1] - color1[1]) * t)
-    b = int(color1[2] + (color2[2] - color1[2]) * t)
-    return (r, g, b)
 
+    def display_attacks(self):
+        font_size = (self.attack_text_rect.height // (len(player.melee_attacks) + len(self.player.ranged_attacks)) ) * 4
+        melee_keys = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        ranged_keys = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p']
+        attacks = self.player.melee_attacks[:10] + self.player.ranged_attacks[:10]
+        keys = melee_keys + ranged_keys
+        font = pygame.font.Font(None, font_size)
+
+        for i, attack in enumerate(attacks):
+            rage_color = int(attack['rage_chance'] * 255 / 100)
+            level_color = int(attack['power_level'] * 255 / 12)
+            color = (rage_color, 100, level_color)
+            key = keys[i % len(keys)]  # Use modulus to ensure a valid index
+            text = font.render(f"{key} - {attack['name']}", True, color)
+            y = i * font_size
+            self.screen.blit(text, (self.attack_text_rect.x, y))
 
 def divide_power_level(power_level, num_enemies):
     power_levels = np.random.randint(1, power_level, size=num_enemies - 1)
@@ -311,181 +344,17 @@ def generate_mob(power_level, player, enemies_group):
 
     print(f"Generated a mob with a power level of {power_level} containing {num_enemies}")
 
+def check_enemy_health(enemy, enemies_group):
+    if enemy.health <= 0:
+        enemies_group.remove(enemy)
 
-def draw_wave_text(screen, wave_number):
-    font = pygame.font.Font(None, 36)
-    text = font.render(f"Wave: {wave_number}", True, BLACK)
-    screen.blit(text, (WIDTH - 100, 10))
+    if not enemies_group:
+        global mobs_defeated
+        mobs_defeated += 1
+        print(f"Mobs defeated: {mobs_defeated}")
 
-
-def lerp_color(color1, color2, t):
-    r = int(color1[0] + (color2[0] - color1[0]) * t)
-    g = int(color1[1] + (color2[1] - color1[1]) * t)
-    b = int(color1[2] + (color2[2] - color1[2]) * t)
-    return (r, g, b)
-
-
-def divide_power_level(power_level, num_enemies):
-    power_levels = np.random.randint(1, power_level, size=num_enemies - 1)
-    power_levels = np.sort(power_levels)
-    power_levels = np.insert(power_levels, 0, 0)
-    power_levels = np.append(power_levels, power_level)
-
-    return np.diff(power_levels)
-
-def generate_mob(power_level, player, enemies_group):
-    num_enemies = random.randint(1, power_level // 3 + 1)
-    enemy_powers = divide_power_level(power_level, num_enemies)
-
-    for power in enemy_powers:
-        corners = power + 3
-        created = False
-        while not created:
-            x = random.randint(playarea_rect.left, playarea_rect.right - 50)  # Subtract 50 (enemy width) to prevent enemies from spawning outside the play area horizontally
-            y = random.randint(playarea_rect.top, playarea_rect.bottom - 50)  # Subtract 50 (enemy height) to prevent enemies from spawning outside the play area vertically
-            enemy = Enemy(corners, x, y)
-            distance = math.sqrt((player.rect.x - x)**2 + (player.rect.y - y)**2)
-
-            if distance > player.radius * 3:
-                enemies_group.add(enemy)
-                created = True
-
-    print(f"Generated a mob with a power level of {power_level} containing {num_enemies}")
-
-
-def draw_wave_text(screen, wave_number):
-    font = pygame.font.Font(None, 36)
-    text = font.render(f"Wave: {wave_number}", True, BLACK)
-    screen.blit(text, (WIDTH - 100, 10))
-
-def display_attacks(screen, player, attack_text_rect):
-    font_size = (attack_text_rect.height // (len(player.melee_attacks) + len(player.ranged_attacks)) ) * 4
-
-    melee_keys = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    ranged_keys = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p']
-
-    attacks = player.melee_attacks[:10] + player.ranged_attacks[:10]
-    keys = melee_keys + ranged_keys
-
-    font = pygame.font.Font(None, font_size)
-
-    for i, attack in enumerate(attacks):
-        rage_color = int(attack['rage_chance'] * 255 / 100)
-        level_color = int(attack['power_level'] * 255 / 12)
-        color = (rage_color, 100, level_color)
-        key = keys[i % len(keys)]  # Use modulus to ensure a valid index
-        text = font.render(f"{key} - {attack['name']}", True, color)
-        y = i * font_size
-        screen.blit(text, (attack_text_rect.x, y))
-
-def draw_status_bar(screen, x, y, width, height, value, max_value, color, label):
-    # Draw the background of the status bar
-    pygame.draw.rect(screen, (255, 255, 255), (x, y, width, height))
-
-    # Calculate the filled part of the status bar
-    filled_width = int(width * (value / max_value))
-
-    # Draw the filled part of the status bar
-    pygame.draw.rect(screen, color, (x, y, filled_width, height))
-
-    # Render the label text
-    font = pygame.font.Font(None, 24)
-    label_surface = font.render(label, True, (255, 255, 255))
-
-    # Position the label under the status bar
-    label_x = x + (width - label_surface.get_width()) // 2
-    label_y = y + height + 5
-
-    # Draw the label on the screen
-    screen.blit(label_surface, (label_x, label_y))
-
-
-
-def perform_attack(attack):
-    print(f"Attack Name: {attack['name']}, Type: {attack['type']}, Power Level: {attack['power_level']}")
-    if random.randint(0, 101) > attack['rage_chance']:
-        player.rage += 1
-        if player.rage >= player.max_rage:
-            player.rage = 0
-            if player.level > 1:
-                player.level -= 1
-
-    if attack['type'] == "melee":
-        perform_melee_attack(attack)
-
-def perform_melee_attack(attack):
-    expanding_circle = ExpandingCircle(player, attack)
-    expanding_circle_group.add(expanding_circle)
-
-def check_collision(player, enemies_group):
-    for enemy in enemies_group.sprites():
-        for corner in enemy.jagged_shape:
-            corner_x = enemy.rect.x + corner[0]
-            corner_y = enemy.rect.y + corner[1]
-            distance = math.sqrt((player.rect.x + player.radius - corner_x)**2 + (player.rect.y + player.radius - corner_y)**2)
-
-            if distance <= player.radius:
-                player.health -= enemy.power_level
-
-                # Calculate push direction
-                push_x = (player.rect.x + player.radius) - corner_x
-                push_y = (player.rect.y + player.radius) - corner_y
-                push_distance = math.sqrt(push_x**2 + push_y**2)
-
-                # Normalize push direction
-                push_x /= push_distance
-                push_y /= push_distance
-
-                # Apply push force
-                push_force = 20
-                player.rect.x += push_x * push_force
-                player.rect.y += push_y * push_force
-                player.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT - 150))
-
-                break  # No need to check other corners for this enemy
-
-
-def display_attacks(screen, player, attack_text_rect):
-    font_size = (attack_text_rect.height // (len(player.melee_attacks) + len(player.ranged_attacks)) ) * 4
-
-    melee_keys = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    ranged_keys = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p']
-
-    attacks = player.melee_attacks[:10] + player.ranged_attacks[:10]
-    keys = melee_keys + ranged_keys
-
-    font = pygame.font.Font(None, font_size)
-
-    for i, attack in enumerate(attacks):
-        rage_color = int(attack['rage_chance'] * 255 / 100)
-        level_color = int(attack['power_level'] * 255 / 12)
-        color = (rage_color, 100, level_color)
-        key = keys[i % len(keys)]  # Use modulus to ensure a valid index
-        text = font.render(f"{key} - {attack['name']}", True, color)
-        y = i * font_size
-        screen.blit(text, (attack_text_rect.x, y))
-
-def draw_status_bar(screen, x, y, width, height, value, max_value, color, label):
-    # Draw the background of the status bar
-    pygame.draw.rect(screen, (255, 255, 255), (x, y, width, height))
-
-    # Calculate the filled part of the status bar
-    filled_width = int(width * (value / max_value))
-
-    # Draw the filled part of the status bar
-    pygame.draw.rect(screen, color, (x, y, filled_width, height))
-
-    # Render the label text
-    font = pygame.font.Font(None, 24)
-    label_surface = font.render(label, True, (255, 255, 255))
-
-    # Position the label under the status bar
-    label_x = x + (width - label_surface.get_width()) // 2
-    label_y = y + height + 5
-
-    # Draw the label on the screen
-    screen.blit(label_surface, (label_x, label_y))
-
+        if mobs_defeated < total_mobs:
+            generate_mob(2 * (mobs_defeated + 1), player, enemies_group)
 
 
 def perform_attack(attack):
@@ -534,9 +403,8 @@ def check_collision(player, enemies_group):
                 break  # No need to check other corners for this enemy
 
 
-
-
 # Main game loop
+player = Player()
 wave_number = 1
 mobs_defeated = 0
 total_mobs = 1  # Change this to the number of mobs in a wave
@@ -553,14 +421,12 @@ start_x = game_text_rect.x + (game_text_rect.width - total_width) // 2
 playarea_background = generate_background(playarea_rect)
 expanding_circle_group = pygame.sprite.Group()
 running = True
-FPS = 60
 enemies_group = pygame.sprite.Group()
 mob = generate_mob(3, player, enemies_group)
-print(mob)
-
+renderer = ScreenRenderer(screen, playarea_background, playarea_rect, player, attack_text_rect, game_text_rect)
 
 while running:
-    clock.tick(FPS)
+    clock.tick(60)
 
     # Process input (events)
     for event in pygame.event.get():
@@ -585,9 +451,6 @@ while running:
                 check_enemy_health(enemy, enemies_group)
 
     player.projectiles = [projectile for projectile in player.projectiles if not projectile.hit]
-
-
-
 
     # Update key delays and remove keys with zero delay
     for key in list(key_delays.keys()):
@@ -615,8 +478,6 @@ while running:
     for enemy in enemies_group:
         enemy.move_towards_player(player.rect.x, player.rect.y)
 
-
-
     if mobs_defeated >= total_mobs:
         wave_number += 1
         mobs_defeated = 0
@@ -626,28 +487,7 @@ while running:
 
 
     expanding_circle_group.update(enemies_group)
-    # Clear the screen
-    screen.fill((205,235,205))
-    screen.blit(playarea_background, (playarea_rect.left, playarea_rect.top))
-    draw_status_bar(screen, start_x, game_text_rect.y, bar_width, bar_height, player.health, player.max_health, (255, 0, 0), "Health")
-    draw_status_bar(screen, start_x + bar_width + bar_spacing, game_text_rect.y, bar_width, bar_height, player.rage, player.max_rage, (255, 140, 0), "Rage")
-    draw_status_bar(screen, start_x + (bar_width + bar_spacing) * 2, game_text_rect.y, bar_width, bar_height, player.level, player.max_level, (0, 255, 0), "Level")
-    draw_wave_text(screen, wave_number)
-    display_attacks(screen, player, attack_text_rect)
-    enemies_group.draw(screen)
-    expanding_circle_group.draw(screen)
 
-    # Update projectiles
-    for projectile in player.projectiles[:]:
-        projectile.move()
-        projectile.fade()
-        projectile.draw(screen)
-
-        if projectile.color[2] == 0:
-            player.projectiles.remove(projectile)
-
-    screen.blit(player.image, player.rect)
-    pygame.display.flip()
-    #clock.tick(60)
+    renderer.draw_screen(enemies_group, expanding_circle_group, wave_number)
 
 pygame.quit()
