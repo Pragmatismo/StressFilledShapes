@@ -44,7 +44,7 @@ class Player(pygame.sprite.Sprite):
         self.max_rage = 100
         self.max_level = 12
         self.projectiles = []
-        self.last_direction = (0, 0)
+        self.last_direction = pygame.math.Vector2(0, -1)
         #
         self.image = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
         pygame.draw.circle(self.image, BLUE, (self.size // 2, self.size // 2), self.size // 2)
@@ -58,7 +58,9 @@ class Player(pygame.sprite.Sprite):
 
     def update_last_direction(self, x_change, y_change):
         if x_change != 0 or y_change != 0:
-            self.last_direction = (x_change, y_change)
+            direction = pygame.math.Vector2(x_change, y_change)
+            if direction.length_squared() != 0:
+                self.last_direction = direction.normalize()
 
     def move(self, x_change, y_change):
         self.rect.x += x_change
@@ -66,8 +68,7 @@ class Player(pygame.sprite.Sprite):
         self.update_last_direction(x_change, y_change)
 
     def perform_ranged_attack(self, power_level):
-        fade_rate = (power_level * random.randint(3,10)) / 10
-        projectile = Projectile(self.rect.x, self.rect.y, self.last_direction, fade_rate)
+        projectile = Projectile(self.rect.center, self.last_direction, power_level, self.level)
         self.projectiles.append(projectile)
 
     def generate_attacks(self, attack_type):
@@ -188,29 +189,41 @@ class ExpandingCircle(pygame.sprite.Sprite):
                     check_enemy_health(enemy, enemies_group)
 
 class Projectile:
-    def __init__(self, x, y, direction, fade_rate):
+    def __init__(self, position, direction, power_level, player_level):
         self.hit = False
-        self.power_level = random.randint(50, 2500) * player.level
-        self.x = x
-        self.y = y
-        self.direction = direction
-        self.color = (5, 5, 255)
-        self.size = (random.randint(24, 24*8) * player.level) / 12
-        self.speed = random.randint(5, 25) / 50
-        self.fade_rate = fade_rate
-        self.rect = pygame.Rect(self.x, self.y, self.size, self.size)
+        self.position = pygame.math.Vector2(position)
+        direction_vector = pygame.math.Vector2(direction)
+        if direction_vector.length_squared() == 0:
+            direction_vector = pygame.math.Vector2(0, -1)
+        else:
+            direction_vector = direction_vector.normalize()
+        self.direction = direction_vector
+
+        self.power_level = int(max(1, power_level) * max(1, player_level))
+        self.size = int(6 + power_level * 2)
+        self.speed = 5 + power_level * 0.5 + player_level * 0.5
+        self.fade_rate = max(2, int(power_level * 1.5))
+        self.color = [5, 5, 255]
+
+        diameter = self.size * 2
+        self.rect = pygame.Rect(0, 0, diameter, diameter)
+        self.rect.center = (int(self.position.x), int(self.position.y))
 
     def move(self):
-        self.x += self.direction[0] * self.speed
-        self.y += self.direction[1] * self.speed
-        self.rect.x = self.x
-        self.rect.y = self.y
+        self.position += self.direction * self.speed
+        self.rect.center = (int(self.position.x), int(self.position.y))
 
     def fade(self):
-        self.color = (self.color[0], self.color[1], max(0, self.color[2] - self.fade_rate))
+        new_blue = max(0, self.color[2] - self.fade_rate)
+        self.color[2] = int(new_blue)
 
     def draw(self, screen):
-        pygame.draw.circle(screen, self.color, (self.x, self.y), self.size)
+        pygame.draw.circle(
+            screen,
+            (int(self.color[0]), int(self.color[1]), int(self.color[2])),
+            self.rect.center,
+            self.size,
+        )
 
 class ScreenRenderer:
     def __init__(self, screen, playarea_background, playarea_rect, player, attack_text_rect, game_text_rect):
